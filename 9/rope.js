@@ -4,10 +4,10 @@ const path = require('path');
 /**
  * Simulates the movement of the rope and returns the number of visited squares of the end of the rope.
  */
-async function simulateMovement(inputText) {
-    let head = { x: 0, y: 0 };
-    let tail = { x: 0, y: 0 };
-    const visitedSquares = new Set([`${tail.x},${tail.y}`]);
+async function simulateMovement(inputText, numKnots) {
+    let rope = Array(numKnots).fill(null).map(_ => ({ x: 0, y: 0 }));
+    rope.last = () => rope[rope.length - 1];
+    const visitedSquares = new Set(['0,0']);
     let bounds = {
         minX: 0,
         maxX: 0,
@@ -21,44 +21,69 @@ async function simulateMovement(inputText) {
 
         // Move 'amount' steps, individually.
         for (let i = 0; i < amount; i++) {
-            moveStep(head, tail, direction);
-            visitedSquares.add(`${tail.x},${tail.y}`);
+            await moveStep(rope, direction, bounds, visitedSquares);
+            visitedSquares.add(`${rope.last().x},${rope.last().y}`);
 
-            bounds.minX = Math.min(bounds.minX, head.x, tail.x);
-            bounds.maxX = Math.max(bounds.maxX, head.x, tail.x);
-            bounds.minY = Math.min(bounds.minY, head.y, tail.y);
-            bounds.maxY = Math.max(bounds.maxY, head.y, tail.y);
-
-            await renderFrame(bounds, head, tail, visitedSquares);
+            if (animate && !animateSteps) {
+                await renderFrame(bounds, rope, visitedSquares);
+            }
         }
     }
     return visitedSquares.size;
 }
 
-function moveStep(head, tail, direction) {
+function updateBounds(rope, bounds) {
+    bounds.minX = Math.min(bounds.minX, ...rope.map(r => r.x));
+    bounds.maxX = Math.max(bounds.maxX, ...rope.map(r => r.x));
+    bounds.minY = Math.min(bounds.minY, ...rope.map(r => r.y));
+    bounds.maxY = Math.max(bounds.maxY, ...rope.map(r => r.y));
+}
+
+async function moveStep(rope, direction, bounds, visitedSquares) {
     // Move the head of the rope
     switch (direction) {
         case 'U':
-            head.y--;
+            rope[0].y--;
             break;
         case 'D':
-            head.y++;
+            rope[0].y++;
             break;
         case 'L':
-            head.x--;
+            rope[0].x--;
             break;
         case 'R':
-            head.x++;
+            rope[0].x++;
             break;
     }
-    // Update the tail
-    if (Math.abs(head.x - tail.x) >= 2) {
-        tail.x += (tail.x < head.x) ? 1 : -1;
-        tail.y = head.y;
+    updateBounds([rope[0]], bounds);
+
+    if (animateSteps) {
+        await renderFrame(bounds, rope, visitedSquares);
     }
-    else if (Math.abs(head.y - tail.y) >= 2) {
-        tail.y += (tail.y < head.y) ? 1 : -1;
-        tail.x = head.x;
+
+    // Update each know in the rope.
+    for (let i = 1; i < rope.length; i++) {
+        const forward = rope[i - 1];
+        const current = rope[i];
+        if (Math.abs(forward.x - current.x) >= 2 || Math.abs(forward.y - current.y) >= 2) {
+            // Move one step, potentially diagonally, towards the forward knot.
+            if (current.x < forward.x) {
+                current.x++;
+            }
+            else if (current.x > forward.x) {
+                current.x--;
+            }
+            if (current.y < forward.y) {
+                current.y++;
+            }
+            else if (current.y > forward.y) {
+                current.y--;
+            }
+        }
+
+        if (animateSteps) {
+            await renderFrame(bounds, rope, visitedSquares);
+        }
     }
 }
 
@@ -67,23 +92,20 @@ async function sleep(ms) {
 }
 
 // Draws one animation frame to the console, waiting a bit so that the animation isn't too fast.
-async function renderFrame(bounds, head, tail, visitedSquares) {
-    if (!animate) {
-        return;
-    }
+async function renderFrame(bounds, rope, visitedSquares) {
     // Instead of clearing the console, move the cursor to the top left corner.
     // This way, the animation doesn't flicker.
     console.log('\x1b[0;0H');
-    console.log(renderRope(bounds, head, tail, visitedSquares));
+    console.log(renderRope(bounds, rope, visitedSquares));
     await sleep(30);
 }
 
 /**
  * Draw an ascii art representation of the rope, along with the visited squares.
  *
- * Uses console colors to make it easier to see the rope and the visited squares.
+ * Uses console colors to make it easier to see the rope and the visited squares
  */
-function renderRope(bounds, head, tail, visitedSquares) {
+function renderRope(bounds, rope, visitedSquares) {
     // Round up the bounds to the nearest power of 2 so that the size of the
     // ascii art doesn't change too often.
     // Also, use a minimum size of 8 for each dimension.
@@ -101,13 +123,16 @@ function renderRope(bounds, head, tail, visitedSquares) {
 
     const output2dArray = Array(height).fill(null).map(() => Array(width).fill(' '));
 
-    // Define the escape sequences for the colors we plan to use
+    // Define the escape sequences for the colors we plan to use.
+    // The visited squares are drawn in dim grey
+    // The origin is drawn in bright green.
+    // The head of the rope is drawn in bright red, and the rest of the rope is drawn in yellow.
     const colors = {
-        head: '\x1b[31m\x1b[1m',
-        tail: '\x1b[34m\x1b[1m',
-        visited: '\x1b[32m\x1b[1m',
-        origin: '\x1b[33m\x1b[1m',
         reset: '\x1b[0m',
+        visited: '\x1b[2m\x1b[90m',
+        origin: '\x1b[92m',
+        ropeHead: '\x1b[91m',
+        rope: '\x1b[93m',
     };
 
     // Draw the visited squares
@@ -117,9 +142,12 @@ function renderRope(bounds, head, tail, visitedSquares) {
     }
     // Draw the origin square with an 's'
     output2dArray[origin.y][origin.x] = `${colors.origin}s${colors.reset}`;
-    // Draw the tail, and then the head
-    output2dArray[tail.y + origin.y][tail.x + origin.x] = `${colors.tail}T${colors.reset}`;
-    output2dArray[head.y + origin.y][head.x + origin.x] = `${colors.head}H${colors.reset}`;
+    // Draw the rope, backwards so that the head is drawn last. Using 'H' for the head, and numbers for the rest of the rope.
+    for (let i = rope.length - 1; i >= 0; i--) {
+        const { x, y } = rope[i];
+        const color = i === 0 ? colors.ropeHead : colors.rope;
+        output2dArray[y + origin.y][x + origin.x] = `${color}${i === 0 ? 'H' : i}${colors.reset}`;
+    }
 
     // Return as a string
     return output2dArray.map(row => row.join('')).join('\n');
@@ -130,12 +158,19 @@ async function solve(filename) {
     const text = fs.readFileSync(filepath, 'utf-8').trimEnd();
 
     console.log(`${filename}:`);
-    const pt1 = await simulateMovement(text);
-    console.log('Part 1:', pt1);
+    // const pt1 = await simulateMovement(text, 2);
+    // console.log('Part 1:', pt1);
+
+    const pt2 = await simulateMovement(text, 10);
+    console.log('Part 2:', pt2);
 }
 
+async function solveAll() {
+    // await solve('demo.txt');
+    await solve('input.txt');
+}
+
+let animateSteps = false;
 let animate = false;
 
-solve('demo.txt').then(
-    () => solve('input.txt')
-)
+solveAll();
