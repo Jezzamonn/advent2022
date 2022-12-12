@@ -1,11 +1,13 @@
 const fs = require('fs');
 const path = require('path');
 
+// BigInt solution is too slow. Will return and try a different approach.
+
 class Monkey {
     index: number = -1;
-    items: number[] = [];
-    operation: (item: number) => number = (item: number) => 0;
-    test: (item: number) => boolean = (item: number) => false;
+    items: bigint[] = [];
+    operation: (item: bigint) => bigint = (item: bigint) => 0n;
+    test: (item: bigint) => boolean = (item: bigint) => false;
     destIfTrue: number = 0;
     destIfFalse: number = 0;
 
@@ -29,15 +31,20 @@ class Monkey {
     static parse(line: string): Monkey {
         const monkey = new Monkey();
 
-        const lines = line.split('\n');
+        const linesSplit = line.split('\n').map((line) => line.trim().split(' '));
 
-        monkey.index = parseInt(lines[0].trim().split(' ')[1]);
-        monkey.items = lines[1].trim().split(' ').slice(2).map((x: string) => parseInt(x));
-        const operation = lines[2].trim().split(' ')[4];
-        const operationNumber = parseInt(lines[2].trim().split(' ')[5]);
+        monkey.index = parseInt(linesSplit[0][1]);
+        monkey.items = linesSplit[1].slice(2).map((item) => BigInt(parseInt(item)));
+        const operation = linesSplit[2][4];
 
-        monkey.operation = (item: number) => {
-            if (isNaN(operationNumber)) {
+        const operationNumberStr = linesSplit[2][5];
+        let operationNumber = 0n;
+        if (operationNumberStr !== 'old') {
+            operationNumber = BigInt(linesSplit[2][5]);
+        }
+
+        monkey.operation = (item) => {
+            if (operationNumberStr === 'old') {
                 return item * item;
             }
             switch (operation) {
@@ -49,10 +56,10 @@ class Monkey {
                     throw new Error(`Unknown operation ${operation}`);
             }
         }
-        const testDivisor = parseInt(lines[3].trim().split(' ')[3]);
-        monkey.test = (item: number) => item % testDivisor === 0;
-        monkey.destIfTrue = parseInt(lines[4].trim().split(' ')[5]);
-        monkey.destIfFalse = parseInt(lines[5].trim().split(' ')[5]);
+        const testDivisor = BigInt(linesSplit[3][3]);
+        monkey.test = (item) => item % testDivisor === 0n;
+        monkey.destIfTrue = parseInt(linesSplit[4][5]);
+        monkey.destIfFalse = parseInt(linesSplit[5][5]);
 
         return monkey;
     }
@@ -75,23 +82,27 @@ function parseMonkeys(inputText: string): Monkey[] {
 function simulateMonkeys(inputText: string) {
     const monkeys = parseMonkeys(inputText);
 
-    const rounds = 20;
+    const rounds = 10000;
     for (let r = 0; r < rounds; r++) {
         for (const monkey of monkeys) {
-            // Copy the items array so we can modify it while iterating
-            const items = monkey.items;
-            monkey.items = [];
-            for (const item of items) {
+            while (monkey.items.length > 0) {
+                const item = monkey.items.shift()!;
+
                 let newItem = monkey.operation(item);
                 monkey.inspectCount++;
-                // Experience 'relief', dividing the item worry level by 3
-                newItem = Math.floor(newItem / 3);
+
+                // Part 2: No relief.
+                // // Experience 'relief', dividing the item worry level by 3
+                // newItem = newItem / 3n;
 
                 const dest = monkey.test(newItem) ? monkey.destIfTrue : monkey.destIfFalse;
                 monkeys[dest].items.push(newItem);
 
-                printSummaries(monkeys);
+                // printSummaries(monkeys);
             }
+        }
+        if (r % 100 === 0) {
+            console.log(`Round ${r} complete`);
         }
     }
 
