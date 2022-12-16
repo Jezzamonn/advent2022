@@ -1,17 +1,19 @@
 const fs = require('fs');
 const path = require('path');
 
-// BigInt solution is too slow. Will return and try a different approach.
-
 class Monkey {
     index: number = -1;
     items: bigint[] = [];
     operation: (item: bigint) => bigint = (item: bigint) => 0n;
-    test: (item: bigint) => boolean = (item: bigint) => false;
+    testDivisor: bigint = 0n;
     destIfTrue: number = 0;
     destIfFalse: number = 0;
 
-    inspectCount: number = 0;
+    inspectCount: bigint = 0n;
+
+    test(item: bigint): boolean {
+        return item % this.testDivisor === 0n;
+    }
 
     /**
      * Parses information from the string representation.
@@ -56,8 +58,7 @@ class Monkey {
                     throw new Error(`Unknown operation ${operation}`);
             }
         }
-        const testDivisor = BigInt(linesSplit[3][3]);
-        monkey.test = (item) => item % testDivisor === 0n;
+        monkey.testDivisor = BigInt(linesSplit[3][3]);
         monkey.destIfTrue = parseInt(linesSplit[4][5]);
         monkey.destIfFalse = parseInt(linesSplit[5][5]);
 
@@ -79,21 +80,42 @@ function parseMonkeys(inputText: string): Monkey[] {
         .map(Monkey.parse)
 }
 
-function simulateMonkeys(inputText: string) {
+/**
+ * Print a log message like the following:
+ * ```
+ * == After round 20 ==
+ * Monkey 0 inspected items 99 times.
+ * Monkey 1 inspected items 97 times.
+ * Monkey 2 inspected items 8 times.
+ * Monkey 3 inspected items 103 times.
+ * ```
+ */
+function printRoundSummary(monkeys: Monkey[], round: number) {
+    console.log(`== After round ${round} ==`);
+    for (const monkey of monkeys) {
+        console.log(`Monkey ${monkey.index} inspected items ${monkey.inspectCount} times.`);
+    }
+}
+
+function simulateMonkeys(inputText: string, rounds: number, relief = true): bigint {
     const monkeys = parseMonkeys(inputText);
 
-    const rounds = 10000;
+    const multipleOfDivisors = monkeys.map(m => m.testDivisor).reduce((a, b) => a * b);
+
     for (let r = 0; r < rounds; r++) {
         for (const monkey of monkeys) {
             while (monkey.items.length > 0) {
                 const item = monkey.items.shift()!;
 
                 let newItem = monkey.operation(item);
+                // I don't know if this works but why not try moduloing the thing?
                 monkey.inspectCount++;
 
-                // Part 2: No relief.
-                // // Experience 'relief', dividing the item worry level by 3
-                // newItem = newItem / 3n;
+                // Experience 'relief', dividing the item worry level by 3
+                if (relief) {
+                    newItem = newItem / 3n;
+                }
+                newItem = newItem % multipleOfDivisors;
 
                 const dest = monkey.test(newItem) ? monkey.destIfTrue : monkey.destIfFalse;
                 monkeys[dest].items.push(newItem);
@@ -101,13 +123,23 @@ function simulateMonkeys(inputText: string) {
                 // printSummaries(monkeys);
             }
         }
-        if (r % 100 === 0) {
-            console.log(`Round ${r} complete`);
+        const roundName = r + 1;
+        if (roundName == 1 || roundName == 20 ||
+            (roundName > 0 && roundName % 1000 === 0)) {
+            printRoundSummary(monkeys, roundName);
         }
     }
 
     const inspectCounts = monkeys.map(m => m.inspectCount);
-    inspectCounts.sort((a, b) => b - a);
+    inspectCounts.sort((a, b) => {
+        if (a > b) {
+            return -1;
+        } else if (a < b) {
+            return 1;
+        } else {
+            return 0;
+        }
+    });
     return inspectCounts[0] * inspectCounts[1];
 }
 
@@ -115,8 +147,14 @@ function solve(filename: string) {
     const filepath = path.join(__dirname, filename);
     const inputText = fs.readFileSync(filepath, 'utf-8').trimEnd();
 
-    const pt1 = simulateMonkeys(inputText);
+    console.log(`${filename}:`);
+    const pt1 = simulateMonkeys(inputText, 20, true);
     console.log(`Part 1: ${pt1}`);
+
+    const pt2 = simulateMonkeys(inputText, 10000, false);
+    console.log(`Part 2: ${pt2}`);
+    console.log();
 }
 
+solve('demo.txt');
 solve('input.txt');
