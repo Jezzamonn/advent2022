@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -18,6 +19,31 @@ type Node struct {
 	Name  string
 	Value int
 	Edges map[string]*Edge
+}
+
+// Search state can be summarised as the nodes visited so far, the current node.
+type SearchResult struct {
+	Flow     int
+	TimeLeft int
+}
+
+// Hash the search state. For some reason Autopilot wants to return a string? w/e.
+func hashSearchState(openedValves map[string]struct{}, currentNode string) string {
+	// Sort the nodes visited so that the hash is consistent
+	nodes := make([]string, len(openedValves))
+	i := 0
+	for node := range openedValves {
+		nodes[i] = node
+		i++
+	}
+	sort.Strings(nodes)
+
+	// Now, hash the nodes visited and the current node
+	hash := currentNode + ":"
+	for _, node := range nodes {
+		hash += node
+	}
+	return hash
 }
 
 const startNodeName = "AA"
@@ -87,16 +113,45 @@ func solve(filename string) {
 
 	// Right now this can revisit nodes which probably isn't going to lead to the optimal solution.
 	minutesLeft := 30
-	pt1 := getMostFlowPossible(nodes, make(map[string]struct{}), startNodeName, 0, minutesLeft, 0)
+	pt1 := getMostFlowPossible(
+		nodes,
+		make(map[string]struct{}),
+		make(map[string]*SearchResult),
+		startNodeName,
+		0,
+		minutesLeft,
+		0)
 
 	fmt.Println("Part 1:", pt1)
 }
 
-// Recursive approach, too slow.
-func getMostFlowPossible(nodes map[string]*Node, openedValves map[string]struct{}, startNode string, flowSoFar, minutesLeft, depth int) int {
+// Recursive approach, too slow. But lets try memoizing it.
+func getMostFlowPossible(
+	nodes map[string]*Node,
+	openedValves map[string]struct{},
+	visitedStates map[string]*SearchResult,
+	startNode string,
+	flowSoFar, minutesLeft, depth int) int {
+
 	if minutesLeft <= 0 {
 		// No time left to open any valves
 		return flowSoFar
+	}
+	// No need to continue this search if there's a a way to be at the same node
+	// with the same open valves and more flow. Unless there's a way to do that
+	// with more time too.
+	searchState := hashSearchState(openedValves, startNode)
+	if result, ok := visitedStates[searchState]; ok {
+		if result.Flow > flowSoFar {
+			return flowSoFar
+		}
+		if result.Flow == flowSoFar && result.TimeLeft >= minutesLeft {
+			return flowSoFar
+		}
+	}
+	visitedStates[searchState] = &SearchResult{
+		Flow:     flowSoFar,
+		TimeLeft: minutesLeft,
 	}
 
 	flowOptions := make([]int, 0)
@@ -116,6 +171,7 @@ func getMostFlowPossible(nodes map[string]*Node, openedValves map[string]struct{
 		flow := getMostFlowPossible(
 			nodes,
 			newOpenedValves,
+			visitedStates,
 			startNode,
 			flowSoFar+nodes[startNode].Value*(minutesLeft-1),
 			minutesLeft-1,
@@ -133,6 +189,7 @@ func getMostFlowPossible(nodes map[string]*Node, openedValves map[string]struct{
 		flow := getMostFlowPossible(
 			nodes,
 			openedValves,
+			visitedStates,
 			edge.DestName,
 			flowSoFar,
 			minutesLeft-edge.Cost,
