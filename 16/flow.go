@@ -123,70 +123,44 @@ func solve(filename string) {
 
 	// fmt.Println("Part 1:", pt1)
 
-	// Taking an idea off reddit, for part 2, lets try do two separate searches,
-	// using different sets for the valves. We can easily simulate this by
-	// pretending some valves are open to start with.
-	subsets := getAllSubSetsOfNodes(nodes)
-	pt2 := 0
-	for i, subset := range subsets {
-		fmt.Println("Subset", i, "of", len(subsets))
-		// First explorer flow
-		firstFlow := getMostFlowPossible(
-			nodes,
-			make(map[string]struct{}),
-			subset,
-			make(map[string]*SearchResult),
-			startNodeName,
-			0,
-			26,
-			1)
-		// Second explorer flow
-		inverseSubSet := make(map[string]struct{})
-		for name := range nodes {
-			if _, ok := subset[name]; !ok {
-				inverseSubSet[name] = struct{}{}
-			}
-		}
-		secondFlow := getMostFlowPossible(
-			nodes,
-			make(map[string]struct{}),
-			inverseSubSet,
-			make(map[string]*SearchResult),
-			startNodeName,
-			0,
-			26,
-			1)
-		if firstFlow+secondFlow > pt2 {
-			pt2 = firstFlow + secondFlow
-		}
-	}
+	// Taking an idea off reddit... after the search happens, do another search with the existing open nodes.
+	pt2 := getMostFlowPossible(
+		nodes,
+		make(map[string]struct{}),
+		make(map[string]struct{}),
+		make(map[string]*SearchResult),
+		startNodeName,
+		0,
+		26,
+		1,
+		1)
 	fmt.Println("Part 2:", pt2)
 }
 
-func getAllSubSetsOfNodes(nodes map[string]*Node) []map[string]struct{} {
-	// Get all the nodes
-	nodeNames := make([]string, 0)
-	for name := range nodes {
-		nodeNames = append(nodeNames, name)
-	}
+// func getAllSubSetsOfNodes(nodes map[string]*Node) []map[string]struct{} {
+// 	// Get all the nodes
+// 	nodeNames := make([]string, 0)
+// 	for name := range nodes {
+// 		nodeNames = append(nodeNames, name)
+// 	}
 
-	totalSets := 1 << len(nodeNames)
-	subSets := make([]map[string]struct{}, 0, totalSets)
-	for i := 0; i < totalSets; i++ {
-		subSet := make(map[string]struct{})
-		for j := 0; j < len(nodeNames); j++ {
-			if i&(1<<j) > 0 {
-				subSet[nodeNames[j]] = struct{}{}
-			}
-		}
-		// Skip sets with more than half the nodes
-		if len(subSet) > len(nodeNames)/2 {
-			continue
-		}
-		subSets = append(subSets, subSet)
-	}
-	return subSets
-}
+// 	totalSets := 1 << len(nodeNames)
+// 	subSets := make([]map[string]struct{}, 0, totalSets)
+// 	for i := 0; i < totalSets; i++ {
+// 		subSet := make(map[string]struct{})
+// 		for j := 0; j < len(nodeNames); j++ {
+// 			if i&(1<<j) > 0 {
+// 				subSet[nodeNames[j]] = struct{}{}
+// 			}
+// 		}
+// 		// Skip sets with more than half the nodes
+// 		if len(subSet) > len(nodeNames)/2 {
+// 			continue
+// 		}
+// 		subSets = append(subSets, subSet)
+// 	}
+// 	return subSets
+// }
 
 // Recursive approach, too slow. But lets try memoizing it.
 func getMostFlowPossible(
@@ -195,10 +169,25 @@ func getMostFlowPossible(
 	skippedValves map[string]struct{},
 	visitedStates map[string]*SearchResult,
 	startNode string,
-	flowSoFar, minutesLeft, depth int) int {
+	flowSoFar, minutesLeft, depth, extraSearches int) int {
 
 	if minutesLeft <= 0 {
-		// No time left to open any valves
+		// No time left to open any valves. Time to do another search!!
+		if extraSearches > 0 {
+			// fmt.Println(strings.Repeat(" ", depth), "extra search!")
+			extraFlow := getMostFlowPossible(
+				nodes,
+				make(map[string]struct{}),
+				openedValves,
+				make(map[string]*SearchResult),
+				startNode,
+				flowSoFar,
+				26,
+				depth+1,
+				extraSearches-1,
+			)
+			return flowSoFar + extraFlow
+		}
 		return flowSoFar
 	}
 
@@ -231,8 +220,8 @@ func getMostFlowPossible(
 			}
 			newOpenedValves[startNode] = struct{}{}
 
-			if minutesLeft > 26 {
-				fmt.Println(strings.Repeat(" ", depth), depth, "Opening valve", startNode, "at", minutesLeft, "minutes left. Flow so far:", flowSoFar)
+			if minutesLeft >= 26 {
+				// fmt.Println(strings.Repeat(" ", depth), depth, "Opening valve", startNode, "at", minutesLeft, "minutes left. Flow so far:", flowSoFar)
 			}
 
 			flow := getMostFlowPossible(
@@ -243,7 +232,8 @@ func getMostFlowPossible(
 				startNode,
 				flowSoFar+nodes[startNode].Value*(minutesLeft-1),
 				minutesLeft-1,
-				depth+1)
+				depth+1,
+				extraSearches)
 			flowOptions = append(flowOptions, flow)
 		}
 	}
@@ -251,7 +241,7 @@ func getMostFlowPossible(
 	// Try going through each edge
 	node := nodes[startNode]
 	for _, edge := range node.Edges {
-		if minutesLeft > 26 {
+		if minutesLeft >= 24 && depth < 3 {
 			fmt.Println(strings.Repeat(" ", depth), depth, "Going through", edge.DestName, "at", minutesLeft, "minutes left. Flow so far:", flowSoFar)
 		}
 
@@ -263,7 +253,8 @@ func getMostFlowPossible(
 			edge.DestName,
 			flowSoFar,
 			minutesLeft-edge.Cost,
-			depth+1)
+			depth+1,
+			extraSearches)
 		flowOptions = append(flowOptions, flow)
 	}
 
