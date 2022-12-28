@@ -1,0 +1,31 @@
+digraph G {
+drzm [label="drzm (-) = %!d(float64=30)"];
+drzm -> hmdt;
+drzm -> zczc;
+ptdq [label="ptdq (-) = %!d(float64=2)"];
+ptdq -> humn;
+ptdq -> dvpt;
+lfqf [label=" lfqf  ( 4 )"];
+ljgn [label=" ljgn  ( 2 )"];
+sjmn [label="sjmn (*) = %!d(float64=150)"];
+sjmn -> drzm;
+sjmn -> dbpl;
+dbpl [label=" dbpl  ( 5 )"];
+zczc [label=" zczc  ( 2 )"];
+lgvd [label="lgvd (*) = %!d(float64=4)"];
+lgvd -> ljgn;
+lgvd -> ptdq;
+root [label="root (+) = %!d(float64=152)"];
+root -> pppw;
+root -> sjmn;
+dvpt [label=" dvpt  ( 3 )"];
+sllz [label=" sllz  ( 4 )"];
+pppw [label="pppw (/) = %!d(float64=2)"];
+pppw -> cczh;
+pppw -> lfqf;
+hmdt [label=" hmdt  ( 32 )"];
+cczh [label="cczh (+) = %!d(float64=8)"];
+cczh -> sllz;
+cczh -> lgvd;
+humn [label=" humn  ( 5 )"];
+}
