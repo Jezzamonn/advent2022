@@ -9,17 +9,17 @@ import (
 )
 
 type HasValue interface {
-	GetValue(values map[string]HasValue) float64
+	GetValue(values map[string]HasValue) (int, error)
 	GetGraphvizRepresentation(values map[string]HasValue) string
 }
 
 type Leaf struct {
 	Name  string
-	Value float64
+	Value int
 }
 
-func (l *Leaf) GetValue(values map[string]HasValue) float64 {
-	return l.Value
+func (l *Leaf) GetValue(values map[string]HasValue) (int, error) {
+	return l.Value, nil
 }
 
 func (l *Leaf) GetGraphvizRepresentation(values map[string]HasValue) string {
@@ -36,29 +36,41 @@ type Node struct {
 	// CachedValue    int
 }
 
-func (n *Node) GetValue(values map[string]HasValue) float64 {
+func (n *Node) GetValue(values map[string]HasValue) (int, error) {
 	// // If we've already calculated this value, return it
 	// if n.HasCachedValue {
 	// 	return n.CachedValue
 	// }
-	value1 := values[n.Child1Name].GetValue(values)
-	value2 := values[n.Child2Name].GetValue(values)
+	value1, err1 := values[n.Child1Name].GetValue(values)
+	if err1 != nil {
+		return 0, err1
+	}
+	value2, err2 := values[n.Child2Name].GetValue(values)
+	if err2 != nil {
+		return 0, err2
+	}
 	return n.calculateValue(value1, value2)
 	// n.CachedValue = n.calculateValue(value1, value2)
 	// n.HasCachedValue = true
 	// return n.CachedValue
 }
 
-func (n *Node) calculateValue(value1 float64, value2 float64) float64 {
+func (n *Node) calculateValue(value1 int, value2 int) (int, error) {
 	switch n.Operation {
 	case "+":
-		return value1 + value2
+		return value1 + value2, nil
 	case "-":
-		return value1 - value2
+		return value1 - value2, nil
 	case "*":
-		return value1 * value2
+		return value1 * value2, nil
 	case "/":
-		return value1 / value2
+		if value2 == 0 {
+			return 0, fmt.Errorf("Division by zero: %d / %d", value1, value2)
+		}
+		if value1%value2 != 0 {
+			return 0, fmt.Errorf("Division is not an integer: %d / %d", value1, value2)
+		}
+		return value1 / value2, nil
 	default:
 		panic("Unknown operation: " + n.Operation)
 	}
@@ -67,7 +79,8 @@ func (n *Node) calculateValue(value1 float64, value2 float64) float64 {
 func (n *Node) GetGraphvizRepresentation(values map[string]HasValue) string {
 	// Return a label for this node with it's operation and it's value, and edges to it's children
 	// Warning: Now that I got rid of the cache, this is SLOW.
-	return fmt.Sprintf("%s [label=\"%s (%s) = %d\"];\n", n.Name, n.Name, n.Operation, n.GetValue(values)) +
+	value, _ := n.GetValue(values)
+	return fmt.Sprintf("%s [label=\"%s (%s) = %d\"];\n", n.Name, n.Name, n.Operation, value) +
 		fmt.Sprintf("%s -> %s;\n", n.Name, n.Child1Name) +
 		fmt.Sprintf("%s -> %s;\n", n.Name, n.Child2Name)
 }
@@ -90,27 +103,53 @@ func solve(filename string) {
 	// can then modify humn, and use that to figure out what value for humn is
 	// needed to make root zero.
 
-	// Ah, but it fails because of integer division :(
-
 	values["root"].(*Node).Operation = "-"
-	values["humn"].(*Leaf).Value = 0
 
-	whenHumnIsZero := values["root"].GetValue(values)
-	fmt.Println("whenHumnIsZero:", whenHumnIsZero)
+	var firstValidInputValue int = -1
+	var firstValidOutputValue int
+	var secondValidInputValue int = -1
+	var secondValidOutputValue int
+	for i := 0; secondValidInputValue == -1; i++ {
+		values["humn"].(*Leaf).Value = i
+		outputValue, err := values["root"].GetValue(values)
+		if err != nil {
+			continue
+		}
+		if firstValidInputValue == -1 {
+			firstValidInputValue = i
+			firstValidOutputValue = outputValue
+			fmt.Println("firstValidInputValue:", firstValidInputValue, "firstValidOutputValue:", firstValidOutputValue)
+		} else {
+			secondValidInputValue = i
+			secondValidOutputValue = outputValue
+			fmt.Println("secondValidInputValue:", secondValidInputValue, "secondValidOutputValue:", secondValidOutputValue)
+		}
+	}
 
-	values["humn"].(*Leaf).Value = 1
-	whenHumnIsOne := values["root"].GetValue(values)
-	fmt.Println("whenHumnIsOne:", whenHumnIsOne)
+	// Solve the linear equation to find input value when the output is 0.
+	// y = (p / q)x + b
+	p := firstValidOutputValue - secondValidOutputValue
+	q := firstValidInputValue - secondValidInputValue
+	b := firstValidOutputValue - (p * firstValidInputValue / q)
+	var humn int
+	if p < q {
+		humn = (0 - b) * q / p
+	} else {
+		humn = (0 - b) / (p / q)
+	}
 
-	// Equation of form y = mx + b
-	m := whenHumnIsOne - whenHumnIsZero
-	b := whenHumnIsZero
-
-	// Solve for y = 0
-	humn := -b / m
 	fmt.Println("Part 2:")
 	fmt.Println(humn)
-	fmt.Println(int(humn))
+
+	// Verify the solution.
+	values["humn"].(*Leaf).Value = humn
+	outputValue, err := values["root"].GetValue(values)
+	if err != nil {
+		panic(err)
+	}
+	if outputValue != 0 {
+		panic("Solution is not correct!")
+	}
 }
 
 // Print the graph in Graphviz format
@@ -164,7 +203,7 @@ func parseInput(filename string) map[string]HasValue {
 		}
 		leafMatch := leafRe.FindStringSubmatch(line)
 		if leafMatch != nil {
-			value, err := strconv.ParseFloat(leafMatch[2], 64)
+			value, err := strconv.Atoi(leafMatch[2])
 			if err != nil {
 				panic(err)
 			}
