@@ -41,11 +41,25 @@ func (n *Node) GetValue(values map[string]HasValue) (int, error) {
 	// if n.HasCachedValue {
 	// 	return n.CachedValue
 	// }
-	value1, err1 := values[n.Child1Name].GetValue(values)
+	child1, ok := values[n.Child1Name]
+	if !ok {
+		return 0, fmt.Errorf("Node %s: Child not found: %s", n, n.Child1Name)
+	}
+
+	if n.Operation == "eq" {
+		// Lazy node type: just return the value of the first child
+		return child1.GetValue(values)
+	}
+
+	child2, ok := values[n.Child2Name]
+	if !ok {
+		return 0, fmt.Errorf("Node %s: Child not found: %s", n, n.Child2Name)
+	}
+	value1, err1 := child1.GetValue(values)
 	if err1 != nil {
 		return 0, err1
 	}
-	value2, err2 := values[n.Child2Name].GetValue(values)
+	value2, err2 := child2.GetValue(values)
 	if err2 != nil {
 		return 0, err2
 	}
@@ -78,11 +92,67 @@ func (n *Node) calculateValue(value1 int, value2 int) (int, error) {
 
 func (n *Node) GetGraphvizRepresentation(values map[string]HasValue) string {
 	// Return a label for this node with it's operation and it's value, and edges to it's children
-	// Warning: Now that I got rid of the cache, this is SLOW.
-	value, _ := n.GetValue(values)
-	return fmt.Sprintf("%s [label=\"%s (%s) = %d\"];\n", n.Name, n.Name, n.Operation, value) +
-		fmt.Sprintf("%s -> %s;\n", n.Name, n.Child1Name) +
-		fmt.Sprintf("%s -> %s;\n", n.Name, n.Child2Name)
+	// value, _ := n.GetValue(values)
+	out := fmt.Sprintf("%s [label=\"%s (%s)\"];\n", n.Name, n.Name, n.Operation)
+	out += fmt.Sprintf("%s -> %s;\n", n.Name, n.Child1Name)
+	if n.Operation != "eq" {
+		out += fmt.Sprintf("%s -> %s;\n", n.Name, n.Child2Name)
+	}
+	return out
+}
+
+func (n *Node) Invert(focus string) {
+	var other string
+	if n.Child1Name == focus {
+		other = n.Child2Name
+	} else if n.Child2Name == focus {
+		other = n.Child1Name
+	} else {
+		panic("Child not found: " + focus)
+	}
+
+	switch n.Operation {
+	case "+":
+		// y = x + a -> x = y - a
+		n.Name, n.Child1Name, n.Child2Name = focus, n.Name, other
+		n.Operation = "-"
+	case "-":
+		// Two cases:
+		if n.Child1Name == focus {
+			// y = x - a -> x = y + a
+			n.Name, n.Child1Name, n.Child2Name = focus, n.Name, other
+			n.Operation = "+"
+		} else {
+			// y = a - x -> x = a - y
+			n.Name, n.Child1Name, n.Child2Name = focus, other, n.Name
+			n.Operation = "-"
+		}
+	case "*":
+		// y = x * a -> x = y / a
+		n.Name, n.Child1Name, n.Child2Name = focus, n.Name, other
+		n.Operation = "/"
+	case "/":
+		// Two cases:
+		if n.Child1Name == focus {
+			// y = x / a -> x = y * a
+			n.Name, n.Child1Name, n.Child2Name = focus, n.Name, other
+			n.Operation = "*"
+		} else {
+			// y = a / x -> x = a / y
+			n.Name, n.Child1Name, n.Child2Name = focus, other, n.Name
+			n.Operation = "/"
+		}
+	case "eq":
+		// This is a special case. Make this return the other child.
+		n.Name, n.Child1Name, n.Child2Name = focus, other, ""
+		n.Operation = "eq"
+	default:
+		panic("Unknown operation: " + n.Operation)
+	}
+}
+
+func (n *Node) String() string {
+	return fmt.Sprintf("%s: %s %s %s", n.Name, n.Child1Name, n.Operation, n.Child2Name)
 }
 
 func solve(filename string) {
@@ -90,7 +160,7 @@ func solve(filename string) {
 
 	values := parseInput(filename)
 
-	outputGraphviz(filename, values)
+	// outputGraphviz(filename, values)
 
 	// Part 1:
 	// Print the value of the root node
@@ -98,58 +168,57 @@ func solve(filename string) {
 	fmt.Println(values["root"].GetValue(values))
 
 	// Part 2:
-	//
-	// Lazy approach: Modify the graph, knowing the solution will be linear. We
-	// can then modify humn, and use that to figure out what value for humn is
-	// needed to make root zero.
+	root := values["root"].(*Node)
+	root.Operation = "eq"
 
-	values["root"].(*Node).Operation = "-"
+	fmt.Println("inverting...")
 
-	var firstValidInputValue int = -1
-	var firstValidOutputValue int
-	var secondValidInputValue int = -1
-	var secondValidOutputValue int
-	for i := 0; secondValidInputValue == -1; i++ {
-		values["humn"].(*Leaf).Value = i
-		outputValue, err := values["root"].GetValue(values)
-		if err != nil {
-			continue
+	nextToInvert := "humn"
+	nodesToInvert := make([]*Node, 0)
+	for {
+		var n *Node
+		for _, value := range values {
+			nn, ok := value.(*Node)
+			if !ok {
+				continue
+			}
+			if nn.Child1Name == nextToInvert || nn.Child2Name == nextToInvert {
+				if n != nil {
+					panic("Found two nodes to invert")
+				}
+				n = nn
+			}
 		}
-		if firstValidInputValue == -1 {
-			firstValidInputValue = i
-			firstValidOutputValue = outputValue
-			fmt.Println("firstValidInputValue:", firstValidInputValue, "firstValidOutputValue:", firstValidOutputValue)
-		} else {
-			secondValidInputValue = i
-			secondValidOutputValue = outputValue
-			fmt.Println("secondValidInputValue:", secondValidInputValue, "secondValidOutputValue:", secondValidOutputValue)
+		if n == nil {
+			panic("Node not found")
+		}
+		nodesToInvert = append(nodesToInvert, n)
+		nextToInvert = n.Name
+		if n.Name == "root" {
+			break
 		}
 	}
 
-	// Solve the linear equation to find input value when the output is 0.
-	// y = (p / q)x + b
-	p := firstValidOutputValue - secondValidOutputValue
-	q := firstValidInputValue - secondValidInputValue
-	b := firstValidOutputValue - (p * firstValidInputValue / q)
-	var humn int
-	if p < q {
-		humn = (0 - b) * q / p
-	} else {
-		humn = (0 - b) / (p / q)
-	}
+	nextToInvert = "humn"
+	for _, n := range nodesToInvert {
+		fmt.Println("Inverting", n.Name, "to", nextToInvert)
 
+		oldName := n.Name
+		delete(values, oldName)
+		n.Invert(nextToInvert)
+		values[n.Name] = n
+		nextToInvert = oldName
+
+		if nextToInvert == "root" {
+			break
+		}
+	}
+	// Lets just output as dot file and see what we did.
+	// outputGraphviz(filename+"2", values)
+
+	// Print the value of the humn node
 	fmt.Println("Part 2:")
-	fmt.Println(humn)
-
-	// Verify the solution.
-	values["humn"].(*Leaf).Value = humn
-	outputValue, err := values["root"].GetValue(values)
-	if err != nil {
-		panic(err)
-	}
-	if outputValue != 0 {
-		panic("Solution is not correct!")
-	}
+	fmt.Println(values["humn"].GetValue(values))
 }
 
 // Print the graph in Graphviz format
