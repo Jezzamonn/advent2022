@@ -1,347 +1,148 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
-	"os"
-	"regexp"
-	"sort"
-	"strconv"
-	"strings"
 )
 
-type Edge struct {
-	DestName string
-	Cost     int
-}
+// Search state can be summarised as the nodes visited so far and the time left
+type SearchState struct {
+	// All the nodes we've stopped at and opened a valve at. This doesn't include nodes we passed through to get to other nodes.
+	NodesVisited    []string
+	NodesVisitedSet map[string]struct{}
 
-type Node struct {
-	Name  string
-	Value int
-	Edges map[string]*Edge
-}
-
-// Search state can be summarised as the nodes visited so far, the current node.
-type SearchResult struct {
 	Flow     int
 	TimeLeft int
 }
 
-// Hash the search state. For some reason Autopilot wants to return a string? w/e.
-func hashSearchState(openedValves map[string]struct{}, currentNode string) string {
-	// Sort the nodes visited so that the hash is consistent
-	nodes := make([]string, len(openedValves))
-	i := 0
-	for node := range openedValves {
-		nodes[i] = node
-		i++
-	}
-	sort.Strings(nodes)
+func (s SearchState) CurrentNodeName() string {
+	return s.NodesVisited[len(s.NodesVisited)-1]
+}
 
-	// Now, hash the nodes visited and the current node
-	hash := currentNode + ":"
-	for _, node := range nodes {
-		hash += node
+func (s SearchState) Value() int {
+	return s.Flow
+}
+
+func (s SearchState) UpperBound(g *Graph) int {
+	// Upper bound is the visiting all the nodes that are reachable within the time left from this node
+	curr := s.CurrentNodeName()
+
+	// For the moment, just add up the flow.
+
+	// We could lower this bound by simulating visiting them all in order of
+	// distance, pretending that we can get from the first node to the second
+	// node in the difference in distance between the two. This seems good
+	// enough for now.
+	extraFlow := 0
+	for _, node := range g.Nodes {
+		if _, ok := s.NodesVisitedSet[node.Name]; ok {
+			continue
+		}
+		dist := g.Distances[NamePair{curr, node.Name}]
+		if dist > s.TimeLeft {
+			continue
+		}
+		extraFlow += node.Value * (s.TimeLeft - dist)
 	}
-	return hash
+	return s.Flow + extraFlow
+}
+
+func (s SearchState) GetSubStates(g *Graph) []SearchState {
+	subStates := make([]SearchState, 0)
+	currNodeName := s.CurrentNodeName()
+
+	// Create a new state for visiting every other node.
+	for _, node := range g.Nodes {
+		// No point revisiting a node.
+		if _, ok := s.NodesVisitedSet[node.Name]; ok {
+			continue
+		}
+		// Add 1 to account for the time to open the node.
+		dist := g.Distances[NamePair{currNodeName, node.Name}] + 1
+		if (dist > s.TimeLeft) || (dist == 0) {
+			continue
+		}
+
+		// Duplicate the nodes visited data structures
+		newNodesVisited := make([]string, len(s.NodesVisited)+1)
+		copy(newNodesVisited, s.NodesVisited)
+		newNodesVisited[len(s.NodesVisited)] = node.Name
+
+		newNodesVisitedSet := make(map[string]struct{})
+		for k, v := range s.NodesVisitedSet {
+			newNodesVisitedSet[k] = v
+		}
+		newNodesVisitedSet[node.Name] = struct{}{}
+
+		newTimeLeft := s.TimeLeft - dist
+		newFlow := s.Flow + node.Value*newTimeLeft
+
+		newState := SearchState{
+			NodesVisited:    newNodesVisited,
+			NodesVisitedSet: newNodesVisitedSet,
+			Flow:            newFlow,
+			TimeLeft:        newTimeLeft,
+		}
+		subStates = append(subStates, newState)
+	}
+	return subStates
 }
 
 const startNodeName = "AA"
 
-func parseFile(filename string) (nodes map[string]*Node) {
-	// Read input
-	f, err := os.Open(filename)
-	if err != nil {
-		panic(err)
-	}
-	defer f.Close()
-
-	// Parse the input into a graph
-	nodes = make(map[string]*Node)
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := scanner.Text()
-		// Parse an example line like this:
-		// Valve GJ has flow rate=14; tunnels lead to valves UV, AO, MM, UD, GM
-		// Using a regex to parse the line
-		re := regexp.MustCompile(`Valve (\w+) has flow rate=(\d+); tunnel(s?) lead(s?) to valve(s?) (\w+(, \w+)*)`)
-		matches := re.FindStringSubmatch(line)
-		if matches == nil {
-			panic("Invalid line: " + line)
-		}
-
-		// Create the node
-		value, err := strconv.Atoi(matches[2])
-		if err != nil {
-			panic(err)
-		}
-		node := &Node{
-			Name:  matches[1],
-			Value: value,
-			Edges: make(map[string]*Edge),
-		}
-		// Create the edges
-		for _, destName := range strings.Split(matches[6], ", ") {
-			node.Edges[destName] = &Edge{
-				DestName: destName,
-				Cost:     1,
-			}
-		}
-		nodes[node.Name] = node
-	}
-	return nodes
+func parseFile(filename string) *Graph {
+	return GraphFromFile(filename)
 }
 
 func solve(filename string) {
 	fmt.Println("Solving", filename)
 
-	nodes := parseFile(filename)
-	// For the moment, just print the nodes?
-	for _, node := range nodes {
-		fmt.Println(node)
+	graph := parseFile(filename)
+
+	// Do branch and bound
+	s := SearchState{
+		NodesVisited:    []string{startNodeName},
+		NodesVisitedSet: map[string]struct{}{startNodeName: {}},
+		Flow:            0,
+		TimeLeft:        30,
 	}
+	best := s
 
-	// outputAsDotFile(nodes, "16/graph.dot")
-	removeZeroValueNodes(nodes)
+	// Just visit all states with a DFS to start
+	toVisit := make([]SearchState, 0)
+	toVisit = append(toVisit, s)
 
-	// outputAsDotFile(nodes, "16/opt.dot")
+	searched := 0
+	skipped := 0
+	for len(toVisit) > 0 {
+		// Pop the first node
+		currentState := toVisit[0]
+		toVisit = toVisit[1:]
 
-	// Now, search through different paths to find the one with the best value.
-	// We'll use a DFS to find the best path, treating each 'node' of the search as a possible path.
-	// This may be too slow, so we'll see how it goes.
-
-	// Right now this can revisit nodes which probably isn't going to lead to the optimal solution.
-	// pt1 := getMostFlowPossible(
-	// 	nodes,
-	// 	make(map[string]struct{}),
-	// 	make(map[string]*SearchResult),
-	// 	startNodeName,
-	// 	0,
-	// 	30,
-	// 	0)
-
-	// fmt.Println("Part 1:", pt1)
-
-	// Taking an idea off reddit... after the search happens, do another search with the existing open nodes.
-	pt2 := getMostFlowPossible(
-		nodes,
-		make(map[string]struct{}),
-		make(map[string]struct{}),
-		make(map[string]*SearchResult),
-		startNodeName,
-		0,
-		26,
-		1,
-		1)
-	fmt.Println("Part 2:", pt2)
-}
-
-// func getAllSubSetsOfNodes(nodes map[string]*Node) []map[string]struct{} {
-// 	// Get all the nodes
-// 	nodeNames := make([]string, 0)
-// 	for name := range nodes {
-// 		nodeNames = append(nodeNames, name)
-// 	}
-
-// 	totalSets := 1 << len(nodeNames)
-// 	subSets := make([]map[string]struct{}, 0, totalSets)
-// 	for i := 0; i < totalSets; i++ {
-// 		subSet := make(map[string]struct{})
-// 		for j := 0; j < len(nodeNames); j++ {
-// 			if i&(1<<j) > 0 {
-// 				subSet[nodeNames[j]] = struct{}{}
-// 			}
-// 		}
-// 		// Skip sets with more than half the nodes
-// 		if len(subSet) > len(nodeNames)/2 {
-// 			continue
-// 		}
-// 		subSets = append(subSets, subSet)
-// 	}
-// 	return subSets
-// }
-
-// Recursive approach, too slow. But lets try memoizing it.
-func getMostFlowPossible(
-	nodes map[string]*Node,
-	openedValves map[string]struct{},
-	skippedValves map[string]struct{},
-	visitedStates map[string]*SearchResult,
-	startNode string,
-	flowSoFar, minutesLeft, depth, extraSearches int) int {
-
-	if minutesLeft <= 0 {
-		// No time left to open any valves. Time to do another search!!
-		if extraSearches > 0 {
-			// fmt.Println(strings.Repeat(" ", depth), "extra search!")
-			extraFlow := getMostFlowPossible(
-				nodes,
-				make(map[string]struct{}),
-				openedValves,
-				make(map[string]*SearchResult),
-				startNode,
-				flowSoFar,
-				26,
-				depth+1,
-				extraSearches-1,
-			)
-			return flowSoFar + extraFlow
-		}
-		return flowSoFar
-	}
-
-	// No need to continue this search if there's a a way to be at the same node
-	// with the same open valves and more flow. Unless there's a way to do that
-	// with more time too.
-	searchState := hashSearchState(openedValves, startNode)
-	if result, ok := visitedStates[searchState]; ok {
-		if result.Flow > flowSoFar {
-			return flowSoFar
-		}
-		if result.Flow == flowSoFar && result.TimeLeft >= minutesLeft {
-			return flowSoFar
-		}
-	}
-	visitedStates[searchState] = &SearchResult{
-		Flow:     flowSoFar,
-		TimeLeft: minutesLeft,
-	}
-
-	flowOptions := make([]int, 0)
-
-	// If this valve isn't opened, AND it's not skipped, we can try opening it.
-	if _, ok := openedValves[startNode]; !ok {
-		if _, ok := skippedValves[startNode]; !ok {
-
-			newOpenedValves := make(map[string]struct{})
-			for k, v := range openedValves {
-				newOpenedValves[k] = v
-			}
-			newOpenedValves[startNode] = struct{}{}
-
-			if minutesLeft >= 26 {
-				// fmt.Println(strings.Repeat(" ", depth), depth, "Opening valve", startNode, "at", minutesLeft, "minutes left. Flow so far:", flowSoFar)
-			}
-
-			flow := getMostFlowPossible(
-				nodes,
-				newOpenedValves,
-				skippedValves,
-				visitedStates,
-				startNode,
-				flowSoFar+nodes[startNode].Value*(minutesLeft-1),
-				minutesLeft-1,
-				depth+1,
-				extraSearches)
-			flowOptions = append(flowOptions, flow)
-		}
-	}
-
-	// Try going through each edge
-	node := nodes[startNode]
-	for _, edge := range node.Edges {
-		if minutesLeft >= 24 && depth < 3 {
-			fmt.Println(strings.Repeat(" ", depth), depth, "Going through", edge.DestName, "at", minutesLeft, "minutes left. Flow so far:", flowSoFar)
+		if currentState.Flow > best.Flow {
+			fmt.Println("Found new best", currentState.Flow, "\tsearched", searched, "skipped", skipped)
+			best = currentState
 		}
 
-		flow := getMostFlowPossible(
-			nodes,
-			openedValves,
-			skippedValves,
-			visitedStates,
-			edge.DestName,
-			flowSoFar,
-			minutesLeft-edge.Cost,
-			depth+1,
-			extraSearches)
-		flowOptions = append(flowOptions, flow)
-	}
-
-	// Now, find the best flow option
-	bestFlow := 0
-	for _, flow := range flowOptions {
-		if flow > bestFlow {
-			bestFlow = flow
-		}
-	}
-	return bestFlow
-}
-
-func removeZeroValueNodes(nodes map[string]*Node) {
-	// Optimize the graph by removing nodes with value of 0.
-	// First get all the keys because we're going to modify the map
-	// while iterating over it.
-	nodeNames := make([]string, len(nodes))
-	i := 0
-	for nodeName := range nodes {
-		nodeNames[i] = nodeName
-		i++
-	}
-
-	for _, nodeName := range nodeNames {
-		node := nodes[nodeName]
-		if node.Value != 0 {
+		// Bound: Don't explore substates if the upper bound is less than the best
+		if currentState.UpperBound(graph) < best.Flow {
+			skipped++
 			continue
 		}
-		// Special case the start node because we need it for the solution.
-		if node.Name == startNodeName {
-			continue
-		}
-		deleteNode(nodes, nodeName)
+
+		// Add the substates to the list of states to visit
+		subStates := currentState.GetSubStates(graph)
+		toVisit = append(toVisit, subStates...)
+		searched++
 	}
+
+	fmt.Println("Best flow", best.Flow, "\tsearched", searched, "skipped", skipped)
 }
 
-func deleteNode(nodes map[string]*Node, nodeName string) {
-	node := nodes[nodeName]
-	// Remove this node
-	delete(nodes, nodeName)
-	// Remove this node from the other node's edges
-	for _, edge := range node.Edges {
-		otherNode := nodes[edge.DestName]
-		delete(otherNode.Edges, nodeName)
+func intMin(a, b int) int {
+	if a < b {
+		return a
 	}
-
-	// Connect all the nodes that pass through this node
-	// to each other.
-	for _, firstEdge := range node.Edges {
-		for _, secondEdge := range node.Edges {
-			if firstEdge == secondEdge {
-				continue
-			}
-
-			// Connect the two nodes
-			firstNode := nodes[firstEdge.DestName]
-			secondNode := nodes[secondEdge.DestName]
-
-			// TODO: Check if the edge already exists, and maybe update the cost
-			firstNode.Edges[secondNode.Name] = &Edge{
-				DestName: secondNode.Name,
-				Cost:     firstEdge.Cost + secondEdge.Cost,
-			}
-			secondNode.Edges[firstNode.Name] = &Edge{
-				DestName: firstNode.Name,
-				Cost:     firstEdge.Cost + secondEdge.Cost,
-			}
-		}
-	}
-}
-
-func outputAsDotFile(nodes map[string]*Node, filename string) {
-	f, err := os.Create(filename)
-	if err != nil {
-		panic(err)
-	}
-	defer f.Close()
-
-	// The graph is not directed.
-	f.WriteString("digraph {\n")
-	for _, node := range nodes {
-		for _, edge := range node.Edges {
-			f.WriteString(fmt.Sprintf("\t%s -> %s [label=%d];\n", node.Name, edge.DestName, edge.Cost))
-		}
-	}
-	f.WriteString("}\n")
+	return b
 }
 
 func main() {
