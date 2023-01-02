@@ -4,18 +4,18 @@ import (
 	"fmt"
 )
 
-// Search state can be summarised as the nodes visited so far and the time left
+const startNodeName = "AA"
+const startTime = 26
+
 type SearchState struct {
+	CurrNode string
 	// All the nodes we've stopped at and opened a valve at. This doesn't include nodes we passed through to get to other nodes.
-	NodesVisited    []string
 	NodesVisitedSet map[string]struct{}
 
-	Flow     int
-	TimeLeft int
-}
-
-func (s SearchState) CurrentNodeName() string {
-	return s.NodesVisited[len(s.NodesVisited)-1]
+	// Whether we've restarted the search from the state node, to represent the elephant doing it's own search.
+	Restarted bool
+	Flow      int
+	TimeLeft  int
 }
 
 func (s SearchState) Value() int {
@@ -23,10 +23,17 @@ func (s SearchState) Value() int {
 }
 
 func (s SearchState) UpperBound(g *Graph) int {
-	// Upper bound is the visiting all the nodes that are reachable within the time left from this node
-	curr := s.CurrentNodeName()
+	value := UpperBoundFromNode(s.CurrNode, g, s.NodesVisitedSet, s.TimeLeft)
+	if !s.Restarted {
+		// The upper bound also includes the value of a restarted search from the start node.
+		value += UpperBoundFromNode(startNodeName, g, s.NodesVisitedSet, startTime)
+	}
+	return s.Flow + value
+}
 
-	// For the moment, just add up the flow.
+// The flow from visiting all the nodes that are reachable within the time left from this node
+func UpperBoundFromNode(nodeName string, g *Graph, alreadyVisited map[string]struct{}, timeLeft int) int {
+	// For the moment, just add up the flow of each reachable node.
 
 	// We could lower this bound by simulating visiting them all in order of
 	// distance, pretending that we can get from the first node to the second
@@ -34,21 +41,21 @@ func (s SearchState) UpperBound(g *Graph) int {
 	// enough for now.
 	extraFlow := 0
 	for _, node := range g.Nodes {
-		if _, ok := s.NodesVisitedSet[node.Name]; ok {
+		if _, ok := alreadyVisited[node.Name]; ok {
 			continue
 		}
-		dist := g.Distances[NamePair{curr, node.Name}]
-		if dist > s.TimeLeft {
+		dist := g.Distances[NamePair{nodeName, node.Name}]
+		if dist > timeLeft {
 			continue
 		}
-		extraFlow += node.Value * (s.TimeLeft - dist)
+		extraFlow += node.Value * (timeLeft - dist)
 	}
-	return s.Flow + extraFlow
+	return extraFlow
 }
 
 func (s SearchState) GetSubStates(g *Graph) []SearchState {
 	subStates := make([]SearchState, 0)
-	currNodeName := s.CurrentNodeName()
+	currNodeName := s.CurrNode
 
 	// Create a new state for visiting every other node.
 	for _, node := range g.Nodes {
@@ -62,11 +69,7 @@ func (s SearchState) GetSubStates(g *Graph) []SearchState {
 			continue
 		}
 
-		// Duplicate the nodes visited data structures
-		newNodesVisited := make([]string, len(s.NodesVisited)+1)
-		copy(newNodesVisited, s.NodesVisited)
-		newNodesVisited[len(s.NodesVisited)] = node.Name
-
+		// Duplicate the nodes visited
 		newNodesVisitedSet := make(map[string]struct{})
 		for k, v := range s.NodesVisitedSet {
 			newNodesVisitedSet[k] = v
@@ -77,17 +80,35 @@ func (s SearchState) GetSubStates(g *Graph) []SearchState {
 		newFlow := s.Flow + node.Value*newTimeLeft
 
 		newState := SearchState{
-			NodesVisited:    newNodesVisited,
+			CurrNode:        node.Name,
 			NodesVisitedSet: newNodesVisitedSet,
+			Restarted:       s.Restarted,
 			Flow:            newFlow,
 			TimeLeft:        newTimeLeft,
 		}
 		subStates = append(subStates, newState)
 	}
+
+	// And we might also be able to stop here and restart the search.
+	if !s.Restarted {
+		// Copy the nodes visited set because no need to revisit these nodes.
+		newNodesVisitedSet := make(map[string]struct{})
+		for k, v := range s.NodesVisitedSet {
+			newNodesVisitedSet[k] = v
+		}
+
+		newState := SearchState{
+			CurrNode:        startNodeName,
+			NodesVisitedSet: newNodesVisitedSet,
+			Restarted:       true,
+			Flow:            s.Flow,
+			TimeLeft:        startTime,
+		}
+		subStates = append(subStates, newState)
+	}
+
 	return subStates
 }
-
-const startNodeName = "AA"
 
 func parseFile(filename string) *Graph {
 	return GraphFromFile(filename)
@@ -100,10 +121,11 @@ func solve(filename string) {
 
 	// Do branch and bound
 	s := SearchState{
-		NodesVisited:    []string{startNodeName},
+		CurrNode:        startNodeName,
 		NodesVisitedSet: map[string]struct{}{startNodeName: {}},
+		Restarted:       false,
 		Flow:            0,
-		TimeLeft:        30,
+		TimeLeft:        startTime,
 	}
 	best := s
 
@@ -134,6 +156,7 @@ func solve(filename string) {
 		toVisit = append(toVisit, subStates...)
 		searched++
 	}
+	// 2063 is too low (?)
 
 	fmt.Println("Best flow", best.Flow, "\tsearched", searched, "skipped", skipped)
 }
